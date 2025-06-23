@@ -535,19 +535,9 @@ if __name__ == '__main__':
     import os
     port = int(os.environ.get('PORT', 5000))
     
-    # Check if running in production
-    is_production = os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER') or os.environ.get('HEROKU')
-    
-    if is_production:
-        # In production, allow unsafe werkzeug for socketio
-        socketio.run(app, 
-                    debug=False,
-                    host='0.0.0.0', 
-                    port=port,
-                    allow_unsafe_werkzeug=True)
-    else:
-        # Local development
-        socketio.run(app, 
-                    debug=True,
-                    host='0.0.0.0', 
-                    port=port)
+    # Always allow unsafe werkzeug in production for SocketIO
+    socketio.run(app, 
+                debug=False,
+                host='0.0.0.0', 
+                port=port,
+                allow_unsafe_werkzeug=True)
