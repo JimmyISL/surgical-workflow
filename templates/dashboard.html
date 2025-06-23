@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ user }} Dashboard - Surgical Workflow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        .task-card {
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border-left: 4px solid #007bff;
+        }
+        .task-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .task-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        .appeal-badge {
+            background-color: #dc3545;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.75em;
+        }
+        .section-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .user-header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .kristin-theme { border-left-color: #28a745; }
+        .sharon-theme { border-left-color: #17a2b8; }
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand h1">
+                <i class="fas fa-hospital"></i> Surgical Workflow System
+            </span>
+            <div class="d-flex">
+                <a href="/dashboard/kristin" class="btn btn-outline-light me-2 {{ 'active' if user == 'Kristin' else '' }}">
+                    <i class="fas fa-user-md"></i> Kristin
+                </a>
+                <a href="/dashboard/sharon" class="btn btn-outline-light me-2 {{ 'active' if user == 'Sharon' else '' }}">
+                    <i class="fas fa-calendar-check"></i> Sharon
+                </a>
+                <a href="/postponed-workflows" class="btn btn-outline-light me-2">
+                    <i class="fas fa-clock"></i> Postponed
+                </a>
+                <a href="/task-history" class="btn btn-outline-light">
+                    <i class="fas fa-history"></i> History
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- User Header -->
+        <div class="user-header">
+            <div class="row align-items-center">
+                <div class="col">
+                    <h1><i class="fas fa-user-circle"></i> {{ user }}'s Dashboard</h1>
+                    <p class="mb-0">
+                        {% if user == 'Kristin' %}
+                            Manage prior authorizations, insurance submissions, and appeals
+                        {% else %}
+                            Handle scheduling, site approvals, and surgery coordination
+                        {% endif %}
+                    </p>
+                </div>
+                <div class="col-auto">
+                    <button class="btn btn-light" onclick="location.reload()">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connection Status -->
+        <div id="connection-status" class="alert alert-info d-none">
+            <i class="fas fa-wifi"></i> <span id="status-text">Connecting...</span>
+        </div>
+
+        <!-- Task Sections -->
+        {% if grouped_tasks %}
+            {% for section_name, tasks in grouped_tasks.items() %}
+                <div class="mb-4">
+                    <div class="section-header">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <h3 class="mb-0">
+                                    <i class="fas fa-tasks"></i> {{ section_name }}
+                                </h3>
+                            </div>
+                            <div class="col-auto">
+                                <span class="badge bg-light text-dark">{{ tasks|length }} task{{ 's' if tasks|length != 1 else '' }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        {% for task in tasks %}
+                            <div class="col-lg-4 col-md-6 mb-3">
+                                <div class="card task-card {{ 'kristin-theme' if user == 'Kristin' else 'sharon-theme' }}" 
+                                     onclick="openTask({{ task.id }})">
+                                    <div class="card-body position-relative">
+                                        {% if task.appeal_round > 0 %}
+                                            <span class="appeal-badge">Appeal {{ task.appeal_round }}</span>
+                                        {% endif %}
+                                        
+                                        <h5 class="card-title">{{ task.patient_name }}</h5>
+                                        <h6 class="card-subtitle mb-2 text-muted">{{ task.order_name }}</h6>
+                                        <p class="card-text">{{ task.order_desc[:50] }}{% if task.order_desc|length > 50 %}...{% endif %}</p>
+                                        
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <small class="text-muted">
+                                                <i class="fas fa-calendar"></i> {{ task.created_date }}
+                                            </small>
+                                            {% if task.requires_decision %}
+                                                <span class="badge bg-warning">
+                                                    <i class="fas fa-exclamation"></i> Decision Required
+                                                </span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <i class="fas fa-clipboard-list fa-4x mb-3"></i>
+                <h3>No Tasks Available</h3>
+                <p>You're all caught up! New tasks will appear here when they're assigned to you.</p>
+                {% if user == 'Kristin' %}
+                    <button class="btn btn-primary" onclick="testCreateTasks()">
+                        <i class="fas fa-plus"></i> Create Test Tasks
+                    </button>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Task Detail Modal -->
+    <div class="modal fade" id="taskModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Task Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="taskModalBody">
+                    <!-- Task details will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Socket.IO connection
+        const socket = io();
+        
+        // Connection status
+        socket.on('connect', function() {
+            document.getElementById('connection-status').classList.add('d-none');
+        });
+        
+        socket.on('disconnect', function() {
+            const statusEl = document.getElementById('connection-status');
+            statusEl.classList.remove('d-none');
+            statusEl.className = 'alert alert-warning';
+            document.getElementById('status-text').textContent = 'Connection lost. Reconnecting...';
+        });
+        
+        // Real-time updates
+        socket.on('task_updated', function(data) {
+            console.log('Task updated:', data);
+            // Refresh the page to show updated tasks
+            setTimeout(() => location.reload(), 1000);
+        });
+        
+        socket.on('new_workflows_created', function(data) {
+            console.log('New workflows created:', data);
+            setTimeout(() => location.reload(), 2000);
+        });
+        
+        // Open task detail in new page for now (easier to debug)
+        function openTask(taskId) {
+            window.location.href = `/task/${taskId}`;
+        }
+        
+        // Test function to create sample tasks (for Kristin only)
+        function testCreateTasks() {
+            fetch('/test_csv_upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log(`Created ${data.workflows_created} test workflows!`);
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    console.error('Error creating test tasks');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+    </script>
+</body>
+</html>
