@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_socketio import SocketIO, emit
-import pandas as pd
+import csv
+import io
 import json
 from datetime import datetime
 from config import Config
@@ -313,9 +314,9 @@ def webhook_create_workflows():
             # Format 1: Full CSV content as string
             csv_content = data.get('csv_content')
             if isinstance(csv_content, str):
-                import io
-                df = pd.read_csv(io.StringIO(csv_content))
-                csv_records = df.to_dict('records')
+                # Parse CSV using built-in csv module
+                csv_reader = csv.DictReader(io.StringIO(csv_content))
+                csv_records = list(csv_reader)
             else:
                 csv_records = csv_content
         elif 'records' in data:
@@ -529,4 +530,13 @@ def handle_disconnect():
 if __name__ == '__main__':
     # Create tables when app starts
     create_tables()
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    
+    # Get port from environment (for hosting platforms)
+    import os
+    port = int(os.environ.get('PORT', 5000))
+    
+    # Run with production-ready settings for hosting
+    socketio.run(app, 
+                debug=os.environ.get('FLASK_ENV') == 'development',
+                host='0.0.0.0', 
+                port=port)
