@@ -6,6 +6,8 @@ import json
 from datetime import datetime
 from config import Config
 from models import db, WorkflowInstance, Task, WORKFLOW_STEPS, create_next_task
+from werkzeug.utils import secure_filename
+import os
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -18,6 +20,99 @@ def create_tables():
     """Create database tables"""
     with app.app_context():
         db.create_all()
+
+ALLOWED_EXTENSIONS = {'csv'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def parse_surgery_csv(csv_content):
+    """Parse the specific format of surgery CSV files"""
+    try:
+        lines = csv_content.strip().split('\n')
+        print(f"Total lines in CSV: {len(lines)}")
+        
+        # Find the header line (should contain column names)
+        header_line = None
+        header_index = 0
+        
+        for i, line in enumerate(lines):
+            print(f"Line {i}: {line[:100]}")  # Debug: show first 100 chars of each line
+            if 'order name' in line.lower() and 'patient name' in line.lower():
+                header_line = line
+                header_index = i
+                print(f"Found header at line {i}: {header_line}")
+                break
+        
+        if not header_line:
+            # Try alternative header patterns
+            for i, line in enumerate(lines):
+                if 'patient' in line.lower() and 'order' in line.lower():
+                    header_line = line
+                    header_index = i
+                    print(f"Found alternative header at line {i}: {header_line}")
+                    break
+        
+        if not header_line:
+            raise ValueError("Could not find header line in CSV. Looking for columns with 'order name' and 'patient name'")
+        
+        # Parse the CSV starting from the header
+        csv_lines = lines[header_index:]
+        
+        # Remove the **TOTAL** line and empty lines
+        filtered_lines = []
+        for line in csv_lines:
+            line = line.strip()
+            if line and not line.startswith('**TOTAL**') and ',' in line and not line.startswith('REPORT NAME'):
+                filtered_lines.append(line)
+        
+        print(f"Filtered lines: {len(filtered_lines)}")
+        
+        if len(filtered_lines) <= 1:  # Only header, no data
+            return []
+        
+        # Create CSV reader
+        csv_reader = csv.DictReader(filtered_lines)
+        records = []
+        
+        for row_num, row in enumerate(csv_reader):
+            print(f"Processing row {row_num}: {row}")
+            
+            # Handle both column name variations
+            order_name = (row.get('order name (single)') or 
+                         row.get('order name') or '').strip()
+            patient_name = row.get('patient name', '').strip()
+            
+            # Clean and validate the row
+            if patient_name and order_name:
+                clean_row = {
+                    'patient_name': patient_name,
+                    'patientid': row.get('patientid', '').strip(),
+                    'order_name': order_name,
+                    'order_desc': row.get('order desc', '').strip(),
+                    'order_type_grp': row.get('order type grp', '').strip(),
+                    'created_date': row.get('Created Date', '').strip(),
+                    'approving_provider': row.get('apprving provdr', '').strip(),
+                    'created_provider': row.get('created provdr', '').strip(),
+                    'order_provider': row.get('ordr provdr', '').strip(),
+                    'patient_sex': row.get('patientsex', '').strip()
+                }
+                
+                # Only add if we have essential data
+                if clean_row['patient_name'] and clean_row['order_name']:
+                    records.append(clean_row)
+                    print(f"Added record: {clean_row['patient_name']} - {clean_row['order_name']}")
+                else:
+                    print(f"Skipped row - missing essential data: {clean_row}")
+            else:
+                print(f"Skipped row - missing patient name or order name: patient='{patient_name}', order='{order_name}'")
+        
+        print(f"Final records count: {len(records)}")
+        return records
+        
+    except Exception as e:
+        print(f"Error in parse_surgery_csv: {str(e)}")
+        raise
 
 # Routes
 @app.route('/')
@@ -87,6 +182,116 @@ def task_history():
         task_history.append(task_info)
     
     return render_template('task_history.html', task_history=task_history)
+
+# File upload route - MUST come before dashboard/<user> route
+@app.route('/upload-orders', methods=['POST'])
+def upload_orders():
+    """Handle CSV file upload and create workflows"""
+    try:
+        print("Upload request received")  # Debug log
+        
+        # Check if file was uploaded
+        if 'file' not in request.files:
+            print("No file in request")
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        print(f"File received: {file.filename}")
+        
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'Invalid file type. Please upload a CSV file.'}), 400
+        
+        # Read file content
+        try:
+            csv_content = file.read().decode('utf-8')
+            print(f"CSV content length: {len(csv_content)}")
+            print(f"First 200 chars: {csv_content[:200]}")
+        except Exception as e:
+            print(f"Error reading file: {str(e)}")
+            return jsonify({'error': 'Could not read CSV file'}), 400
+        
+        # Parse CSV data
+        try:
+            records = parse_surgery_csv(csv_content)
+            print(f"Parsed {len(records)} records")
+        except Exception as e:
+            print(f"Error parsing CSV: {str(e)}")
+            return jsonify({'error': f'Error parsing CSV: {str(e)}'}), 400
+        
+        if not records:
+            return jsonify({'error': 'No valid surgery orders found in CSV'}), 400
+        
+        # Create workflows from records
+        created_workflows = []
+        batch_id = f"upload_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        for i, record in enumerate(records):
+            try:
+                print(f"Processing record {i+1}: {record['patient_name']}")
+                
+                # Create workflow instance
+                workflow = WorkflowInstance(
+                    patient_name=record['patient_name'],
+                    patient_id=record['patientid'],
+                    order_name=record['order_name'],
+                    order_desc=record['order_desc'] or record['order_name'],
+                    batch_id=batch_id
+                )
+                # Set CSV data
+                workflow.set_csv_data(record)
+                
+                db.session.add(workflow)
+                db.session.flush()  # Get the ID
+                
+                # Create first task (Prior Authorization) - Create Task directly
+                first_task = Task(
+                    workflow_id=workflow.id,
+                    step_name='prior_authorization',
+                    assigned_to='kristin'
+                )
+                
+                db.session.add(first_task)
+                
+                created_workflows.append({
+                    'id': workflow.id,
+                    'patient_name': workflow.patient_name,
+                    'order_name': workflow.order_name
+                })
+                
+            except Exception as e:
+                print(f"Error creating workflow for {record['patient_name']}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        db.session.commit()
+        print(f"Successfully created {len(created_workflows)} workflows")
+        
+        # Notify connected clients
+        try:
+            socketio.emit('new_workflows_created', {
+                'count': len(created_workflows),
+                'workflows': created_workflows
+            })
+        except Exception as e:
+            print(f"Error emitting socket event: {str(e)}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully created {len(created_workflows)} workflows',
+            'created_workflows': created_workflows,
+            'total_records': len(records)
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Upload error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
 @app.route('/dashboard/<user>')
 def dashboard(user):
@@ -238,7 +443,6 @@ def reactivate_workflow(workflow_id):
     
     # Mark workflow as active
     workflow.status = 'active'
-    workflow.current_step = 'prior_authorization'
     
     # Cancel all existing tasks for this workflow
     existing_tasks = Task.query.filter_by(workflow_id=workflow.id).all()
@@ -527,17 +731,14 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
-@socketio.on('connect')
-def handle_connect():
-    print('Client connected')
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    print('Client disconnected')
-
 if __name__ == '__main__':
     # Create tables when app starts
     create_tables()
+    
+    # Debug: Print all registered routes
+    print("Registered routes:")
+    for rule in app.url_map.iter_rules():
+        print(f"  {rule.rule} -> {rule.endpoint} ({list(rule.methods)})")
     
     # Get port from environment (for hosting platforms)
     import os

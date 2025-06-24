@@ -1,6 +1,4 @@
-</script>
-</body>
-</html><!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -52,6 +50,41 @@
             padding: 40px;
             color: #6c757d;
         }
+        
+        /* File Upload Styles */
+        .upload-section {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            border: 3px dashed rgba(255,255,255,0.5);
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            background: rgba(255,255,255,0.1);
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color: white;
+            background: rgba(255,255,255,0.2);
+        }
+        .upload-link {
+            color: #ffc107;
+            text-decoration: underline;
+        }
+        .upload-status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .upload-status.success { background: rgba(40, 167, 69, 0.2); }
+        .upload-status.error { background: rgba(220, 53, 69, 0.2); }
+        .upload-status.info { background: rgba(23, 162, 184, 0.2); }
     </style>
 </head>
 <body class="bg-light">
@@ -98,6 +131,33 @@
                 </div>
             </div>
         </div>
+
+        <!-- File Upload Section (Kristin Only) -->
+        {% if user == 'Kristin' %}
+        <div class="upload-section">
+            <div class="row align-items-center mb-3">
+                <div class="col">
+                    <h3 class="mb-0">
+                        <i class="fas fa-upload"></i> Upload Daily Surgery Orders
+                    </h3>
+                    <p class="mb-0">Upload today's CSV file to create new surgical workflows</p>
+                </div>
+            </div>
+            
+            <div class="upload-area" id="uploadArea">
+                <i class="fas fa-cloud-upload-alt fa-3x mb-3"></i>
+                <p class="mb-0">📄 Drop CSV file here or <span class="upload-link">click to browse</span></p>
+                <small class="text-light">Supports .csv files up to 10MB</small>
+            </div>
+            
+            <input type="file" id="csvFile" accept=".csv" style="display: none;">
+            <button class="btn btn-warning mt-3" id="uploadBtn" style="display: none;">
+                <i class="fas fa-upload"></i> Upload Orders
+            </button>
+            
+            <div class="upload-status" id="uploadStatus"></div>
+        </div>
+        {% endif %}
 
         <!-- Connection Status -->
         <div id="connection-status" class="alert alert-info d-none">
@@ -157,11 +217,6 @@
                 <i class="fas fa-clipboard-list fa-4x mb-3"></i>
                 <h3>No Tasks Available</h3>
                 <p>You're all caught up! New tasks will appear here when they're assigned to you.</p>
-                {% if user == 'Kristin' %}
-                    <button class="btn btn-primary" onclick="testCreateTasks()">
-                        <i class="fas fa-plus"></i> Create Test Tasks
-                    </button>
-                {% endif %}
             </div>
         {% endif %}
     </div>
@@ -183,7 +238,11 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // File upload functionality
+        // Initialize Socket.IO
+        const socket = io();
+        
+        // File upload functionality (only for Kristin)
+        {% if user == 'Kristin' %}
         const uploadArea = document.getElementById('uploadArea');
         const csvFile = document.getElementById('csvFile');
         const uploadBtn = document.getElementById('uploadBtn');
@@ -245,6 +304,14 @@
                     body: formData
                 });
 
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    console.error('Non-JSON response:', text);
+                    throw new Error('Server returned invalid response');
+                }
+
                 const result = await response.json();
 
                 if (response.ok) {
@@ -258,12 +325,13 @@
                     uploadArea.querySelector('p').innerHTML = '📄 Drop CSV file here or <span class="upload-link">click to browse</span>';
                     uploadBtn.style.display = 'none';
                     
-                    // Refresh workflow list
-                    loadWorkflows();
+                    // Refresh page to show new tasks
+                    setTimeout(() => location.reload(), 2000);
                 } else {
-                    showUploadStatus(`❌ Error: ${result.error}`, 'error');
+                    showUploadStatus(`❌ Error: ${result.error || 'Unknown error'}`, 'error');
                 }
             } catch (error) {
+                console.error('Upload error:', error);
                 showUploadStatus(`❌ Upload failed: ${error.message}`, 'error');
             } finally {
                 uploadBtn.disabled = false;
@@ -282,11 +350,12 @@
                 }, 5000);
             }
         }
+        {% endif %}
 
         // Socket.IO listeners
         socket.on('workflows_updated', function(data) {
             console.log('Workflows updated:', data);
-            loadWorkflows();
+            setTimeout(() => location.reload(), 1000);
         });
         
         // Connection status
@@ -304,7 +373,6 @@
         // Real-time updates
         socket.on('task_updated', function(data) {
             console.log('Task updated:', data);
-            // Refresh the page to show updated tasks
             setTimeout(() => location.reload(), 1000);
         });
         
@@ -313,31 +381,10 @@
             setTimeout(() => location.reload(), 2000);
         });
         
-        // Open task detail in new page for now (easier to debug)
+        // Open task detail in new page
         function openTask(taskId) {
             window.location.href = `/task/${taskId}`;
         }
-        
-        // Test function to create sample tasks (for Kristin only)
-        function testCreateTasks() {
-            fetch('/test_csv_upload', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    console.log(`Created ${data.workflows_created} test workflows!`);
-                    setTimeout(() => location.reload(), 1000);
-                } else {
-                    console.error('Error creating test tasks');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-            });
-        }
-        // Load workflows on page load
-        loadWorkflows();
+    </script>
+</body>
+</html>
