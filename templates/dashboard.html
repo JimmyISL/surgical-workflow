@@ -1,4 +1,6 @@
-<!DOCTYPE html>
+</script>
+</body>
+</html><!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -181,8 +183,111 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Socket.IO connection
-        const socket = io();
+        // File upload functionality
+        const uploadArea = document.getElementById('uploadArea');
+        const csvFile = document.getElementById('csvFile');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const uploadStatus = document.getElementById('uploadStatus');
+
+        // Click to browse
+        uploadArea.addEventListener('click', () => {
+            csvFile.click();
+        });
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                csvFile.files = files;
+                handleFileSelect();
+            }
+        });
+
+        // File selection
+        csvFile.addEventListener('change', handleFileSelect);
+
+        function handleFileSelect() {
+            const file = csvFile.files[0];
+            if (file) {
+                uploadArea.querySelector('p').textContent = `📄 Selected: ${file.name}`;
+                uploadBtn.style.display = 'block';
+            }
+        }
+
+        // Upload button
+        uploadBtn.addEventListener('click', uploadFile);
+
+        async function uploadFile() {
+            const file = csvFile.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Uploading...';
+            showUploadStatus('Uploading orders...', 'info');
+
+            try {
+                const response = await fetch('/upload-orders', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showUploadStatus(
+                        `✅ Success! Created ${result.created_workflows.length} workflows`,
+                        'success'
+                    );
+                    
+                    // Reset form
+                    csvFile.value = '';
+                    uploadArea.querySelector('p').innerHTML = '📄 Drop CSV file here or <span class="upload-link">click to browse</span>';
+                    uploadBtn.style.display = 'none';
+                    
+                    // Refresh workflow list
+                    loadWorkflows();
+                } else {
+                    showUploadStatus(`❌ Error: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showUploadStatus(`❌ Upload failed: ${error.message}`, 'error');
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Upload Orders';
+            }
+        }
+
+        function showUploadStatus(message, type) {
+            uploadStatus.textContent = message;
+            uploadStatus.className = `upload-status ${type}`;
+            uploadStatus.style.display = 'block';
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    uploadStatus.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Socket.IO listeners
+        socket.on('workflows_updated', function(data) {
+            console.log('Workflows updated:', data);
+            loadWorkflows();
+        });
         
         // Connection status
         socket.on('connect', function() {
@@ -234,6 +339,5 @@
                 console.error('Error:', error);
             });
         }
-    </script>
-</body>
-</html>
+        // Load workflows on page load
+        loadWorkflows();

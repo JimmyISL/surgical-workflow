@@ -527,6 +527,14 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected')
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected')
+
 if __name__ == '__main__':
     # Create tables when app starts
     create_tables()
